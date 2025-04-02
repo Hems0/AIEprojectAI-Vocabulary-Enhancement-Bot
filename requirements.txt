@@ -1,4 +1,6 @@
-streamlit
+echo "streamlit
 requests
-pyttsx3
 sqlite3
+pyttsx3
+datetime
+threading" > requirements.txt
