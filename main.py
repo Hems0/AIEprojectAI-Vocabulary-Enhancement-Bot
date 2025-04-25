@@ -1,10 +1,9 @@
 import streamlit as st
 import requests
 import sqlite3
-import pyttsx3
 from datetime import datetime
-import threading  # For running TTS in a separate thread
-
+from gtts import gTTS  # ✅ NEW: gTTS for cloud-compatible text-to-speech
+import os
 
 def update_db_schema():
     conn = sqlite3.connect("vocab.db")
@@ -18,11 +17,9 @@ def update_db_schema():
     conn.commit()
     conn.close()
 
-
 def get_random_word():
     words = ["apple", "banana", "cherry", "table", "chair", "run", "beautiful", "happy", "quick"]
     return words[int(datetime.now().timestamp() % len(words))]
-
 
 def get_word():
     api_url = "https://random-word-api.herokuapp.com/word"
@@ -34,7 +31,6 @@ def get_word():
     except (requests.exceptions.RequestException, IndexError):
         word = get_random_word()
         return fetch_word_details(word)
-
 
 def fetch_word_details(word):
     api_url = f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
@@ -49,8 +45,7 @@ def fetch_word_details(word):
         phonetics = data[0].get('phonetics', [])
         uk_audio = next((item.get('audio') for item in phonetics if 'uk' in item.get('text', '').lower()), None)
         us_audio = next((item.get('audio') for item in phonetics if 'us' in item.get('text', '').lower()), None)
-        
-        # Generate example if not provided
+
         if not example:
             example = generate_example(word, meaning, synonyms, part_of_speech)
 
@@ -65,9 +60,7 @@ def fetch_word_details(word):
     except (requests.exceptions.RequestException, IndexError, KeyError):
         return None
 
-
 def generate_example(word, meaning, synonyms, part_of_speech):
-    """Generates a fallback example sentence using word details."""
     if part_of_speech in ["verb", "action"]:
         return f"I often {word} when I feel energetic."
     elif part_of_speech in ["adjective", "descriptive"]:
@@ -76,7 +69,6 @@ def generate_example(word, meaning, synonyms, part_of_speech):
         return f"The {word} is essential in my daily life."
     else:
         return f"This is an example sentence using the word '{word}'."
-
 
 def create_db():
     conn = sqlite3.connect("vocab.db")
@@ -95,7 +87,6 @@ def create_db():
     conn.commit()
     conn.close()
 
-
 def save_word(word_data):
     conn = sqlite3.connect("vocab.db", timeout=5)
     c = conn.cursor()
@@ -111,7 +102,6 @@ def save_word(word_data):
     conn.commit()
     conn.close()
 
-
 def fetch_saved_words():
     conn = sqlite3.connect("vocab.db", timeout=5)
     c = conn.cursor()
@@ -120,7 +110,6 @@ def fetch_saved_words():
     conn.close()
     return words
 
-
 def delete_word(word):
     conn = sqlite3.connect("vocab.db", timeout=5)
     c = conn.cursor()
@@ -128,21 +117,18 @@ def delete_word(word):
     conn.commit()
     conn.close()
 
+# ✅ NEW FUNCTION: generate audio using gTTS
+def generate_tts_audio(word):
+    tts = gTTS(text=word, lang='en')
+    tts.save("tts_output.mp3")
+    with open("tts_output.mp3", "rb") as audio_file:
+        audio_bytes = audio_file.read()
+    os.remove("tts_output.mp3")
+    return audio_bytes
 
-def play_pronunciation_tts(word):
-    """Plays the word pronunciation using text-to-speech in a separate thread"""
-    def tts_process():
-        try:
-            tts_engine = pyttsx3.init()
-            tts_engine.say(word)
-            tts_engine.runAndWait()
-            tts_engine.stop()  # Ensure the engine stops to release resources
-        except RuntimeError:
-            st.warning("Pronunciation process is already running. Please wait.")
-    
-    # Run TTS in a separate thread
-    threading.Thread(target=tts_process).start()
-
+# ================================
+#         STREAMLIT UI
+# ================================
 
 st.title("AI Vocabulary Enhancement Bot")
 st.write("Expand your vocabulary with new words and pronunciations!")
@@ -150,7 +136,6 @@ st.write("Expand your vocabulary with new words and pronunciations!")
 update_db_schema()
 create_db()
 
-# Section for getting a new word
 if st.button("Get New Word"):
     word_data = get_word()
     if word_data:
@@ -159,7 +144,7 @@ if st.button("Get New Word"):
     else:
         st.error("Failed to fetch a word. Check your internet connection and try again.")
 
-# Displaying the new word's details
+# Displaying the word
 if 'word_data' in st.session_state:
     word_data = st.session_state['word_data']
     st.subheader(f"Word: {word_data['word']} ({word_data['part_of_speech']})")
@@ -173,9 +158,13 @@ if 'word_data' in st.session_state:
     if word_data['pronunciations']['US']:
         st.write("**US Pronunciation:**")
         st.audio(word_data['pronunciations']['US'])
-    st.button("Play Offline Pronunciation", on_click=play_pronunciation_tts, args=(word_data['word'],))
+    
+    # ✅ Updated: Use gTTS-based playback
+    if st.button("Play Pronunciation (gTTS)"):
+        audio_data = generate_tts_audio(word_data['word'])
+        st.audio(audio_data, format="audio/mp3")
 
-# Section for saved words
+# Saved words section
 st.subheader("Saved Words")
 saved_words = fetch_saved_words()
 
@@ -188,9 +177,12 @@ if saved_words:
             st.write(f"**Meaning:** {meaning}")
             st.write(f"**Example:** {example}")
             st.write(f"**Synonyms:** {synonyms}" if synonyms else "**Synonyms:** None")
-            # Add a button to play TTS for the saved word
-            st.button(f"Play Pronunciation for {word}", on_click=play_pronunciation_tts, args=(word,))
-            # Add a delete button
+            
+            # ✅ Use gTTS for saved words too
+            if st.button(f"Play Pronunciation for {word}", key=f"tts_{word}"):
+                audio_data = generate_tts_audio(word)
+                st.audio(audio_data, format="audio/mp3")
+
             if st.button(f"Delete {word}", key=f"delete_{word}"):
                 delete_word(word)
                 st.session_state['rerun'] = not st.session_state['rerun']
